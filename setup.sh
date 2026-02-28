@@ -2,37 +2,38 @@
 set -e  # Exit immediately if a command exits with a non-zero status
 
 # # 1. Install Python dependencies
-echo "Installing base requirements..."
-pip3 install -r requirements.txt
+# echo "Installing base requirements..."
+# pip3 install -r requirements.txt
 
-mkdir -p third_party
+# mkdir -p third_party
 
-# 2. Clone and install Salad
-echo "Cloning and installing Salad..."
-cd third_party
-git clone git@github.com:Dominic101/salad.git
-pip install -e ./salad
-cd ..
+# # 2. Clone and install Salad
+# echo "Cloning and installing Salad..."
+# cd third_party
+# git clone git@github.com:Dominic101/salad.git
+# # pip install -e ./salad
+# pip install -e ./salad -i https://pypi.tuna.tsinghua.edu.cn/simple
+# cd ..
 
-# 3. Clone and install our fork of VGGT
-echo "Cloning and installing VGGT..."
-cd third_party
-git clone git@github.com:MIT-SPARK/VGGT_SPARK.git vggt
-pip install -e ./vggt
-cd ..
+# # 3. Clone and install our fork of VGGT
+# echo "Cloning and installing VGGT..."
+# cd third_party
+# git clone git@github.com:MIT-SPARK/VGGT_SPARK.git vggt
+# pip install -e ./vggt -i https://pypi.tuna.tsinghua.edu.cn/simple
+# cd ..
 
-# 4. Install Perception Encoder
-echo "Cloning and installing Perception Encoder..."
-cd third_party
-git clone org-16943930@github.com:facebookresearch/perception_models.git
-pip install -e ./perception_models
-cd ..
+# # 4. Install Perception Encoder
+# echo "Cloning and installing Perception Encoder..."
+# cd third_party
+# git clone org-16943930@github.com:facebookresearch/perception_models.git
+# pip install -e ./perception_models -i https://pypi.tuna.tsinghua.edu.cn/simple
+# cd ..
 
 # 5. Install SAM 3
 echo "Cloning and installing SAM 3..."
 cd third_party
 git clone org-16943930@github.com:facebookresearch/sam3.git
-pip install -e ./sam3
+pip install -e ./sam3 -i https://pypi.tuna.tsinghua.edu.cn/simple
 cd ..
 
 # 6. Install current repo in editable mode
