@@ -57,7 +57,62 @@ python3 main.py --image_folder office_loop --max_loops 1 --vis_map
 * 通过代码`ls -l /home/kwanwaipang/.cache/torch/hub/checkpoints/`再次确认模型已经下载好了。
 * 注意检查GPU是否可用`python -c "import torch; print('GPU 是否可用:', torch.cuda.is_available()); print('检测到的 GPU 数量:', torch.cuda.device_count())"`，
 * 对于上述输出GPU不可用，大几率是安装时拉取的CUDA版本与Thor显卡驱动不兼容。Thor需要安装:`pip3 install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu130`(注意，需要先卸载`pip uninstall torch torchvision -y`)
+* 遇到CUDA报错:
 
+```bash
+RuntimeError: CUDA error: CUBLAS_STATUS_NOT_INITIALIZED when calling `cublasLtMatmulAlgoGetHeuristic( ltHandle, computeDesc.descriptor(), Adesc.descriptor(), Bdesc.descriptor(), Cdesc.descriptor(), Cdesc.descriptor(), preference.descriptor(), 1, &heuristicResult, &returnedResult)`
+```
+
+此时，并不一定真的是GPU内存不够，可以看看最简单的linear层运行的情况
+```bash
+python3 -c "
+import torch
+print('CUDA available:', torch.cuda.is_available())
+x = torch.randn(2, 3, 224, 224).cuda()
+linear = torch.nn.Linear(224, 128).cuda()
+with torch.no_grad():
+    out = linear(x)
+print('Basic CUDA linear: OK', out.shape)
+"
+```
+有可能是因为`nvidia-cublas 13.1.0.3`不兼容导致的，也可能是之前安装过一次，然后卸载部分依赖卸载不到导致的
+
+```bash
+# 查看 vggt-slam 环境的 nvidia 库版本  
+conda activate vggt-slam
+pip list | grep -E "nvidia-cublas|nvidia-cuda-runtime|nvidia-cudnn|triton"
+```
+
+* 决定重新配置`conda remove --name vggt-slam --all`环境:
+
+```bash
+conda create -n vggt-slam python=3.11.9 
+conda activate vggt-slam
+pip3 install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu130 
+# pip install uv -i https://mirrors.aliyun.com/pypi/simple
+# uv pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu130
+
+# ./setup.sh
+pip3 install -r requirements.txt -i https://pypi.tuna.tsinghua.edu.cn/simple #此代码已修改，下次配置应该不需要重走这个bug
+cd third_party
+pip install -e ./salad -i https://pypi.tuna.tsinghua.edu.cn/simple
+pip install -e ./vggt -i https://pypi.tuna.tsinghua.edu.cn/simple
+pip install -e ./perception_models -i https://pypi.tuna.tsinghua.edu.cn/simple
+pip install -e ./sam3 -i https://pypi.tuna.tsinghua.edu.cn/simple
+cd ..
+pip install -e . -i https://pypi.tuna.tsinghua.edu.cn/simple
+
+```
+* 更新：原因应该是 LD_LIBRARY_PATH 中某个路径的库与 CUDA 13.0 冲突，先查看`echo $LD_LIBRARY_PATH`,然后不设置`unset LD_LIBRARY_PATH` 后正常.注释掉不该有的路径，然后执行`source ~/.bashrc`
+
+
+* 最终运行脚本：
+
+```bash
+conda activate vggt-slam
+unset LD_LIBRARY_PATH
+python3 main.py --image_folder office_loop --max_loops 1 --vis_map
+```
 
 打开浏览器(输入`http://localhost:8080/`)即可可视化结果：
 
