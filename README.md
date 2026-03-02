@@ -116,7 +116,26 @@ python3 main.py --image_folder office_loop --max_loops 1 --vis_map
 
 打开浏览器(输入`http://localhost:8080/`)即可可视化结果：
 
+<div align="center">
+  <img src="./assets/微信截图_20260302170042.png" width="60%" />
+<figcaption> 
+</figcaption>
+</div>
+
 若需要3D开放目标检测，采用flag `--run_os`,接下来会提示用户输入文本查询，并且在Viser的地图上绘制检测到的3D bounding box
+
+```bash
+# https://huggingface.co/facebook/sam3 需要先登录，申请模型的访问权限
+# 需要使用到Hugging Face，因此采用国内镜像源。
+export HF_ENDPOINT=https://hf-mirror.com
+export HF_TOKEN="hf_xxxxxx" #输入Access Token
+python3 main.py --image_folder office_loop --max_loops 1 --vis_map --run_os
+```
+
+获取access token的方式：
+1. 在 Hugging Face 网页右上角点击你的头像，选择 Settings（设置）。
+2. 在左侧菜单点击 Access Tokens。
+3. 点击 "Create new token"，类型选择 Read（只读）即可，生成后复制那串以 hf_ 开头的长字符。
 
 
 * 接下来采用手机录制一段视频的建图效果。
