@@ -137,5 +137,26 @@ python3 main.py --image_folder office_loop --max_loops 1 --vis_map --run_os
 2. 在左侧菜单点击 Access Tokens。
 3. 点击 "Create new token"，类型选择 Read（只读）即可，生成后复制那串以 hf_ 开头的长字符。
 
+另外也可以从网上下载离线模型，然后修改代码`/VGGT-SLAM/third_party/sam3/sam3/model_builder.py`
 
-* 接下来采用手机录制一段视频的建图效果。
+```diff
+-     checkpoint_path = hf_hub_download(repo_id=SAM3_MODEL_ID, filename=SAM3_CKPT_NAME)
++    checkpoint_path = "/home/kwanwaipang/VGGT-SLAM/third_party/sam3_model/config.json" # 换成你实际的文件路径
+```
+
+
+* 接下来采用手机录制一段视频的建图效果。请注意，虽然竖屏手机视频也可以观看，但为了避免图像被裁剪，建议使用横屏视频。
+
+```bash
+# 创建路径
+mkdir <desired_location>/img_folder
+ffmpeg -i /path/to/video.MOV -vf "fps=10" <desired_location>/img_folder/frame_%04d.jpg
+
+python3 main.py --image_folder office_loop_test --max_loops 1 --vis_map
+```
+
+<div align="center">
+  <img src="./assets/微信截图_20260302185155.png" width="60%" />
+<figcaption> 
+</figcaption>
+</div>

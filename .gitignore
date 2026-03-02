@@ -1,5 +1,5 @@
 # Ignore some files from the installation/demo
-office_loop/
+office_loop*
 gtsam_with_sl4/
 gtsam/
 # salad/
@@ -7,6 +7,7 @@ gtsam/
 # perception_models/
 # sam3/
 # third_party/
+sam3_model/
 
 # Ignore setup files from VSCode and Pycharm
 .vscode/
