@@ -141,8 +141,10 @@ python3 main.py --image_folder office_loop --max_loops 1 --vis_map --run_os
 
 ```diff
 -     checkpoint_path = hf_hub_download(repo_id=SAM3_MODEL_ID, filename=SAM3_CKPT_NAME)
-+    checkpoint_path = "/home/kwanwaipang/VGGT-SLAM/third_party/sam3_model/config.json" # 换成你实际的文件路径
++    checkpoint_path = "/home/kwanwaipang/VGGT-SLAM/third_party/sam3_model/weight/sam3.pt" # 换成你实际的文件路径
 ```
+
+* 需要从网站`https://huggingface.co/facebook/PE-Core-L14-336`上，下载权重（应该是CLIP的权重）`PE-Core-L14-336.pt`，放置在`~/.cache/huggingface/hub/`文件夹中
 
 
 * 接下来采用手机录制一段视频的建图效果。请注意，虽然竖屏手机视频也可以观看，但为了避免图像被裁剪，建议使用横屏视频。
