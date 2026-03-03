@@ -61,13 +61,17 @@ import torch
 import matplotlib.pyplot as plt
 
 def mean_top_quarter(arr):
+    """
+    计算数组中前 25% 最大值的均值。
+    对应论文 §IV-B 公式6：取所有比率的 top 25% 的均值作为最终匹配分数。
+    """
     # flatten to 1D
     flat = arr.ravel()
-    # find 75th percentile threshold
+    # find 75th percentile threshold  找到 75% 分位数阈值
     thresh = np.percentile(flat, 75)
-    # select values >= threshold
+    # select values >= threshold  选择 >= 阈值的值（即 top 25%）
     top_vals = flat[flat >= thresh]
-    # return their mean
+    # return their mean  返回其均值
     return top_vals.mean()
 
 
@@ -80,39 +84,51 @@ def mean_top_quarter(arr):
 # shown = attn_mean[:, self.token_offset:tokens_per_img]
 
 def get_similarity(k, q, token_offset=5, image_height=21, image_width=37):
+    """
+    计算两张图像之间的 VGGT Layer 22 匹配分数 α_match。
+    
+    这是论文 §IV-B 的核心实现：
+    1. 从 Layer 22 提取 key (k) 和 query (q) tokens
+    2. 计算图像2的 query tokens 对图像1的 key tokens 的注意力
+    3. 除以图像1内部的最大自注意力值（归一化）
+    4. 取 top 25% 比率的均值作为最终匹配分数
+    
+    Args:
+        k: key tokens (B, num_heads, N, head_dim)
+        q: query tokens (B, num_heads, N, head_dim)
+        token_offset: 特殊 token 偏移量（camera + register tokens）
+        
+    Returns:
+        ratio: α_match 匹配分数（值越高表示两帧重叠越大，> 0.85 确认回环）
+    """
     num_imgs = 2
     tokens_per_img = q.shape[2] // num_imgs
-    # print(k.shape, q.shape)
+    # 只使用图像1的 key tokens（跳过特殊 tokens）
     k = k[:,:,token_offset:tokens_per_img , :]
-    # print(k.shape)
 
+    # 计算注意力分数: Q @ K^T
     attn = q @ k.transpose(-2, -1)
     attn = attn.transpose(-2, -1)
-    # print(attn.shape)
-    attn = attn.softmax(dim=-1)
-    attn = attn.mean(dim=1)
+    attn = attn.softmax(dim=-1)  # softmax 归一化
+    attn = attn.mean(dim=1)  # 对所有注意力头取均值
 
-    all_token_to_first_frame = attn[..., :tokens_per_img]
-    all_token_to_second_frame = attn[..., tokens_per_img:]
+    # 分离两张图像的注意力分数
+    all_token_to_first_frame = attn[..., :tokens_per_img]    # 所有 token 对图像1的注意力
+    all_token_to_second_frame = attn[..., tokens_per_img:]   # 所有 token 对图像2的注意力
 
+    # 论文公式5：计算每个 key token 在图像1中获得的最大注意力值
     max_per_token_first_img = all_token_to_first_frame.max(dim=-1)[0]
-    # max_per_token_second_img = all_token_to_second_frame.max(dim=-1)[0]
 
+    # 论文公式5-6：用图像1的最大注意力归一化图像2的注意力
+    # 直觉：如果图像2中也有高注意力区域，说明 VGGT 找到了跨帧对应关系
     attn_second_frame_normalized = all_token_to_second_frame / (max_per_token_first_img.unsqueeze(-1) + 1e-8)
     ratio = attn_second_frame_normalized.max(dim=1)[0]
 
-    # ratio = max_per_token_second_img / (max_per_token_first_img + 1e-8)
-
     ratio =  ratio.float().detach().cpu().numpy()
+    # 论文公式6：取 top 25% 的均值作为最终匹配分数
     ratio = mean_top_quarter(ratio)
 
-
     print("Average of top quarter attention values (all frames):", ratio)
-    # print("First Frame, Second Frame:", avg_top_quarter_first_img, avg_top_quarter_second_img)
-    # plt.figure(figsize=(6,6))
-    # plt.imshow(max_attn[1].reshape(image_height, image_width))
-    # plt.colorbar()
-    # plt.show()
 
     return ratio
 
@@ -320,29 +336,27 @@ class CosineAttentionVisualizer:
 
 class Aggregator(nn.Module):
     """
-    The Aggregator applies alternating-attention over input frames,
-    as described in VGGT: Visual Geometry Grounded Transformer.
-
-    Remember to set model.train() to enable gradient checkpointing to reduce memory usage.
-
-    Args:
-        img_size (int): Image size in pixels.
-        patch_size (int): Size of each patch for PatchEmbed.
-        embed_dim (int): Dimension of the token embeddings.
-        depth (int): Number of blocks.
-        num_heads (int): Number of attention heads.
-        mlp_ratio (float): Ratio of MLP hidden dim to embedding dim.
-        num_register_tokens (int): Number of register tokens.
-        block_fn (nn.Module): The block type used for attention (Block by default).
-        qkv_bias (bool): Whether to include bias in QKV projections.
-        proj_bias (bool): Whether to include bias in the output projection.
-        ffn_bias (bool): Whether to include bias in MLP layers.
-        patch_embed (str): Type of patch embed. e.g., "conv" or "dinov2_vitl14_reg".
-        aa_order (list[str]): The order of alternating attention, e.g. ["frame", "global"].
-        aa_block_size (int): How many blocks to group under each attention type before switching. If not necessary, set to 1.
-        qk_norm (bool): Whether to apply QK normalization.
-        rope_freq (int): Base frequency for rotary embedding. -1 to disable.
-        init_values (float): Init scale for layer scale.
+    VGGT 的核心骨干网络：交替注意力聚合器。
+    
+    基于 DINOv2-Large 视觉 Transformer，使用「帧内-全局」交替注意力（Alternating Attention）
+    来学习多帧图像之间的几何关系。
+    
+    结构：24层，每层包含一个帧内注意力块 + 一个全局注意力块
+    - frame_blocks: 帧内注意力（每帧独立处理，token shape = (B*S, P, C)）
+    - global_blocks: 全局注意力（所有帧联合处理，token shape = (B, S*P, C)）
+    
+    特殊 tokens:
+    - camera_token: 相机 token（2个位置：首帧 vs 其余帧）
+    - register_token: 注册 token（4个，DINOv2 风格）
+    
+    关键参数：
+        img_size: 图像大小（518px）
+        patch_size: patch 大小（14，来自 DINOv2）
+        embed_dim: 嵌入维度（1024，DINOv2-Large）
+        depth: 层数（24）
+        num_heads: 注意力头数（16）
+        target_layer: 用于回环验证的层（默认 20=Layer 21，论文用 21=Layer 22）
+        aa_order: 交替顺序 ["frame", "global"]，先帧内再全局
     """
 
     def __init__(
@@ -370,12 +384,14 @@ class Aggregator(nn.Module):
         self.viz = CosineAttentionVisualizer()
         self.__build_patch_embed__(patch_embed, img_size, patch_size, num_register_tokens, embed_dim=embed_dim)
 
-        # Initialize rotary position embedding if frequency > 0
+        # Rotary Position Embedding (RoPE) — 旋转位置编码,提供空间位置信息
         self.rope = RotaryPositionEmbedding2D(frequency=rope_freq) if rope_freq > 0 else None
         self.position_getter = PositionGetter() if self.rope is not None else None
 
+        # 目标层索引：用于回环验证的注意力层（论文§IV-B中的 Layer 22）
         self.target_layer = target_layer
 
+        # 帧内注意力块（24层），每帧独立处理
         self.frame_blocks = nn.ModuleList(
             [
                 block_fn(
@@ -393,6 +409,7 @@ class Aggregator(nn.Module):
             ]
         )
 
+        # 全局注意力块（24层），所有帧联合处理
         self.global_blocks = nn.ModuleList(
             [
                 block_fn(
@@ -411,7 +428,7 @@ class Aggregator(nn.Module):
         )
 
         self.depth = depth
-        self.aa_order = aa_order
+        self.aa_order = aa_order  # 交替顺序：["frame", "global"]
         self.patch_size = patch_size
         self.aa_block_size = aa_block_size
 
@@ -422,11 +439,13 @@ class Aggregator(nn.Module):
         self.aa_block_num = self.depth // self.aa_block_size
 
         # Note: We have two camera tokens, one for the first frame and one for the rest
+        # 两种相机 token：首帧用 camera_token[0]，其余帧用 camera_token[1]
         # The same applies for register tokens
         self.camera_token = nn.Parameter(torch.randn(1, 2, 1, embed_dim))
         self.register_token = nn.Parameter(torch.randn(1, 2, num_register_tokens, embed_dim))
 
         # The patch tokens start after the camera and register tokens
+        # patch token 起始索引 = 1(camera) + 4(register) = 5
         self.patch_start_idx = 1 + num_register_tokens
 
         # Initialize parameters with small values
@@ -482,14 +501,24 @@ class Aggregator(nn.Module):
 
     def forward(self, images: torch.Tensor, compute_similarity=False) -> Tuple[List[torch.Tensor], int]:
         """
+        Aggregator 的前向传播。
+        
+        处理流程：
+        1. ImageNet 归一化 → Patch Embedding (DINOv2)
+        2. 拼接 camera token + register token + patch tokens
+        3. 交替执行 24 层: 帧内注意力 → 全局注意力
+        4. 在 target_layer 时提取 target_tokens（用于图像检索）
+        5. 如果 compute_similarity=True，在 target_layer 计算 α_match
+
         Args:
-            images (torch.Tensor): Input images with shape [B, S, 3, H, W], in range [0, 1].
-                B: batch size, S: sequence length, 3: RGB channels, H: height, W: width
+            images: 输入图像 [B, S, 3, H, W]
+            compute_similarity: 是否计算 Layer 22 匹配分数（回环验证时使用）
 
         Returns:
-            (list[torch.Tensor], int):
-                The list of outputs from the attention blocks,
-                and the patch_start_idx indicating where patch tokens begin.
+            output_list: 各层的帧内+全局拼接特征列表
+            patch_start_idx: patch token 起始索引（5）
+            target_tokens: Layer 22 的归一化 tokens（用于 SALAD 检索）
+            image_match_ratio: α_match 匹配分数（仅 compute_similarity=True 时有值）
         """
         B, S, C_in, H, W = images.shape
 
@@ -500,23 +529,26 @@ class Aggregator(nn.Module):
         # if compute_similarity:
         #     viz_attention = True
 
-        # Normalize images and reshape for patch embed
+        # ImageNet 标准归一化
         images = (images - self._resnet_mean) / self._resnet_std
 
         # Reshape to [B*S, C, H, W] for patch embedding
+        # 展平为 (B*S, C, H, W) 送入 DINOv2 提取 patch tokens
         images = images.view(B * S, C_in, H, W)
-        patch_tokens = self.patch_embed(images)
+        patch_tokens = self.patch_embed(images)  # DINOv2 ViT patch embedding
 
         if isinstance(patch_tokens, dict):
-            patch_tokens = patch_tokens["x_norm_patchtokens"]
+            patch_tokens = patch_tokens["x_norm_patchtokens"]  # 取归一化后的 patch tokens
 
-        _, P, C = patch_tokens.shape
+        _, P, C = patch_tokens.shape  # P: 每帧的 patch 数量, C: 嵌入维度 (1024)
 
         # Expand camera and register tokens to match batch size and sequence length
-        camera_token = slice_expand_and_flatten(self.camera_token, B, S)
-        register_token = slice_expand_and_flatten(self.register_token, B, S)
+        # 将特殊 tokens 扩展到 (B*S, X, C) 形状
+        camera_token = slice_expand_and_flatten(self.camera_token, B, S)   # 相机 token
+        register_token = slice_expand_and_flatten(self.register_token, B, S)  # 注册 token
 
         # Concatenate special tokens with patch tokens
+        # 拼接: [camera_token(1), register_tokens(4), patch_tokens(P)] → P+5 个 tokens
         tokens = torch.cat([camera_token, register_token, patch_tokens], dim=1)
 
         pos = None
@@ -544,48 +576,41 @@ class Aggregator(nn.Module):
         # np.save("/home/dominic/vggt/tokens2_decoder.npy", patch_tokens_save.detach().cpu().numpy())
 
         image_match_ratio  = None
+        # ==================== 交替注意力循环（24层） ====================
         for _ in range(self.aa_block_num):
             for attn_type in self.aa_order:
-                # skip_to = 17
-                # if global_idx == 10:
-                #     global_idx = skip_to
-                    # frame_idx = skip_to
-                # if frame_idx == 24 or global_idx == 24:
-                #     break
                 if attn_type == "frame":
+                    # 帧内注意力：tokens shape = (B*S, P, C)，每帧独立处理
                     tokens, frame_idx, frame_intermediates = self._process_frame_attention(
                         tokens, B, S, P, C, frame_idx, pos=pos
                     )
                 elif attn_type == "global":
                     if compute_similarity and global_idx == self.target_layer:
+                        # ★ 在目标层(Layer 22)计算匹配分数 α_match（论文§IV-B）
                         tokens, global_idx, global_intermediates, k, q = self._process_global_attention(
                             tokens, B, S, P, C, global_idx, pos=pos, compute_similarity=True
                         )
+                        # 调用 get_similarity 计算 α_match
                         image_match_ratio = get_similarity(k, q)
                     else:
+                        # 全局注意力：tokens shape = (B, S*P, C)，跨帧联合处理
                         tokens, global_idx, global_intermediates = self._process_global_attention(
                             tokens, B, S, P, C, global_idx, pos=pos
                         )
                     if global_idx == self.target_layer:
+                        # ★ 在目标层提取 target_tokens（用于 SALAD 图像检索特征）
                         print(self.target_layer)
-                        # target_tokens = tokens[:,5:, :].clone()  # exclude camera and register tokens
-                        target_tokens = tokens.clone()  # exclude camera and register tokens
+                        target_tokens = tokens.clone()
                         eps = 1e-8
+                        # L2 归一化，使得余弦相似度计算更方便
                         target_tokens = target_tokens / (target_tokens.norm(dim=-1, keepdim=True) + eps)
 
-
-                        ###### For testing loading a token #####
-                        # loaded_tokens = np.load("/home/dominic/vggt/tokens1.npy")
-                        # print(loaded_tokens.shape, loaded_tokens.dtype)
-                        # loaded_tokens = torch.from_numpy(loaded_tokens).to(target_tokens.device)
-                        # tokens[0,:] = loaded_tokens[10:11,:,:]
-                        # tokens = torch.cat([tokens, loaded_tokens[10:11,:,:]], dim=0)
-                        # S += 1
                 else:
                     raise ValueError(f"Unknown attention type: {attn_type}")
 
             for i in range(len(frame_intermediates)):
                 # concat frame and global intermediates, [B x S x P x 2C]
+                # 拼接帧内和全局中间特征，维度翻倍 → 2*embed_dim
                 concat_inter = torch.cat([frame_intermediates[i], global_intermediates[i]], dim=-1)
                 output_list.append(concat_inter)
 
@@ -599,7 +624,9 @@ class Aggregator(nn.Module):
 
     def _process_frame_attention(self, tokens, B, S, P, C, frame_idx, pos=None):
         """
-        Process frame attention blocks. We keep tokens in shape (B*S, P, C).
+        处理帧内注意力块。
+        tokens 保持 (B*S, P, C) 形状 — 每帧独立处理。
+        帧内注意力学习每帧图像的局部特征（不涉及跨帧信息交换）。
         """
         # If needed, reshape tokens or positions:
         if tokens.shape != (B * S, P, C):
@@ -623,7 +650,12 @@ class Aggregator(nn.Module):
 
     def _process_global_attention(self, tokens, B, S, P, C, global_idx, pos=None, compute_similarity=False):
         """
-        Process global attention blocks. We keep tokens in shape (B, S*P, C).
+        处理全局注意力块。
+        tokens 重塑为 (B, S*P, C) 形状 — 所有帧联合处理。
+        全局注意力学习跨帧的几何关系（多帧之间的特征交互）。
+        
+        当 compute_similarity=True 时，额外返回 key 和 query tokens
+        用于计算 Layer 22 匹配分数（论文§IV-B）。
         """
         if tokens.shape != (B, S * P, C):
             tokens = tokens.view(B, S, P, C).view(B, S * P, C)
@@ -667,21 +699,27 @@ class Aggregator(nn.Module):
 
 def slice_expand_and_flatten(token_tensor, B, S):
     """
-    Processes specialized tokens with shape (1, 2, X, C) for multi-frame processing:
-    1) Uses the first position (index=0) for the first frame only
-    2) Uses the second position (index=1) for all remaining frames (S-1 frames)
-    3) Expands both to match batch size B
-    4) Concatenates to form (B, S, X, C) where each sequence has 1 first-position token
-       followed by (S-1) second-position tokens
-    5) Flattens to (B*S, X, C) for processing
+    处理特殊 tokens（camera/register），使首帧和其余帧使用不同的 token。
+    
+    输入 shape: (1, 2, X, C)
+      - 位置0: 首帧专用 token
+      - 位置1: 其余帧共用 token
+    
+    处理流程:
+    1) 首帧使用 index=0 的 token
+    2) 后续 S-1 帧使用 index=1 的 token
+    3) 拼接 → (B, S, X, C)
+    4) 展平 → (B*S, X, C)
 
     Returns:
-        torch.Tensor: Processed tokens with shape (B*S, X, C)
+        torch.Tensor: 形状 (B*S, X, C)
     """
 
     # Slice out the "query" tokens => shape (1, 1, ...)
+    # 首帧 token
     query = token_tensor[:, 0:1, ...].expand(B, 1, *token_tensor.shape[2:])
     # Slice out the "other" tokens => shape (1, S-1, ...)
+    # 其余帧 token
     others = token_tensor[:, 1:, ...].expand(B, S - 1, *token_tensor.shape[2:])
     # Concatenate => shape (B, S, ...)
     combined = torch.cat([query, others], dim=1)

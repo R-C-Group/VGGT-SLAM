@@ -18,7 +18,11 @@ VAL_DATASETS = ['MSLS', 'MSLS_Test', 'pitts30k_test', 'pitts250k_test', 'Nordlan
 
 
 def input_transform(image_size=None):
-    MEAN=[0.485, 0.456, 0.406]; STD=[0.229, 0.224, 0.225]
+    """
+    SALAD 模型的图像预处理管道。
+    包括可选的 Resize + ToTensor + ImageNet 归一化。
+    """
+    MEAN=[0.485, 0.456, 0.406]; STD=[0.229, 0.224, 0.225]  # ImageNet 均值/标准差
     if image_size:
         return T.Compose([
             T.Resize(image_size,  interpolation=T.InterpolationMode.BILINEAR),
@@ -69,19 +73,35 @@ def get_descriptors(model, dataloader, device):
     return torch.cat(descriptors)
 
 def load_model(ckpt_path):
+    """
+    加载预训练的 SALAD 图像检索模型。
+    
+    架构：
+    - 骨干网络: DINOv2-ViT-B/14（更小的 DINOv2，与 VGGT 的 DINOv2-Large 不同）
+    - 聚合器: SALAD（Sinkhorn Algorithm for Locally-Aggregated Descriptors）
+    - 参数: 64个聚类中心，聚类维度128，token维度256
+    
+    SALAD 用于 VGGT-SLAM 的回环检测第一阶段（粗筛）。
+    
+    Args:
+        ckpt_path: 模型 checkpoint 路径
+    
+    Returns:
+        model: 加载好的 SALAD 模型（已设为 eval 模式，GPU）
+    """
     model = VPRModel(
-        backbone_arch='dinov2_vitb14',
+        backbone_arch='dinov2_vitb14',  # DINOv2 ViT-Base/14 骨干
         backbone_config={
-            'num_trainable_blocks': 4,
-            'return_token': True,
-            'norm_layer': True,
+            'num_trainable_blocks': 4,    # 只微调最后4层
+            'return_token': True,         # 返回 CLS token
+            'norm_layer': True,           # 应用归一化层
         },
-        agg_arch='SALAD',
+        agg_arch='SALAD',                 # SALAD 聚合算法
         agg_config={
-            'num_channels': 768,
-            'num_clusters': 64,
-            'cluster_dim': 128,
-            'token_dim': 256,
+            'num_channels': 768,          # DINOv2-B 的输出维度
+            'num_clusters': 64,           # 64个聚类中心
+            'cluster_dim': 128,           # 聚类向量维度
+            'token_dim': 256,             # CLS token 投影维度
         },
     )
 

@@ -4,6 +4,11 @@
 # This source code is licensed under the license found in the
 # LICENSE file in the root directory of this source tree.
 
+# ==================== VGGT 几何工具函数 ====================
+# 提供深度图反投影、3D坐标变换、相机投影等几何计算工具
+# VGGT-SLAM 主要使用:
+#   - unproject_depth_map_to_point_map(): 深度图 → 3D点云
+#   - closed_form_inverse_se3(): SE3 快速求逆
 import os
 import torch
 import numpy as np
@@ -16,15 +21,21 @@ def unproject_depth_map_to_point_map(
     depth_map: np.ndarray, extrinsics_cam: np.ndarray, intrinsics_cam: np.ndarray
 ) -> np.ndarray:
     """
+    将深度图反投影为3D点云。
+    
+    这是 VGGT-SLAM 中将 VGGT 深度预测转换为3D点云的核心函数。
+    注意：返回的是相机坐标系下的点（cam_coords_points），
+    而非世界坐标系，这对应了论文 §III 中 "3D点定义在各自相机坐标系下" 的设计。
+    
     Unproject a batch of depth maps to 3D world coordinates.
 
     Args:
-        depth_map (np.ndarray): Batch of depth maps of shape (S, H, W, 1) or (S, H, W)
-        extrinsics_cam (np.ndarray): Batch of camera extrinsic matrices of shape (S, 3, 4)
-        intrinsics_cam (np.ndarray): Batch of camera intrinsic matrices of shape (S, 3, 3)
+        depth_map (np.ndarray): 深度图批量 (S, H, W, 1) or (S, H, W)
+        extrinsics_cam (np.ndarray): 相机外参矩阵 (S, 3, 4), 世界→相机
+        intrinsics_cam (np.ndarray): 相机内参矩阵 (S, 3, 3)
 
     Returns:
-        np.ndarray: Batch of 3D world coordinates of shape (S, H, W, 3)
+        np.ndarray: 相机坐标系下的3D点云 (S, H, W, 3)
     """
     if isinstance(depth_map, torch.Tensor):
         depth_map = depth_map.cpu().numpy()
@@ -86,32 +97,40 @@ def depth_to_world_coords_points(
 
 def depth_to_cam_coords_points(depth_map: np.ndarray, intrinsic: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
     """
+    将深度图反投影为相机坐标系下的3D点。
+    
+    核心公式：
+        X_cam = (u - cx) * depth / fx
+        Y_cam = (v - cy) * depth / fy
+        Z_cam = depth
+    这对应 K^{-1} * [u,v,1]^T * depth 的操作。
+
     Convert a depth map to camera coordinates.
 
     Args:
-        depth_map (np.ndarray): Depth map of shape (H, W).
-        intrinsic (np.ndarray): Camera intrinsic matrix of shape (3, 3).
+        depth_map (np.ndarray): 深度图 (H, W)
+        intrinsic (np.ndarray): 相机内参 3x3 [[fx,0,cx],[0,fy,cy],[0,0,1]]
 
     Returns:
-        tuple[np.ndarray, np.ndarray]: Camera coordinates (H, W, 3)
+        tuple[np.ndarray, np.ndarray]: 相机坐标 (H, W, 3)
     """
     H, W = depth_map.shape
     assert intrinsic.shape == (3, 3), "Intrinsic matrix must be 3x3"
     assert intrinsic[0, 1] == 0 and intrinsic[1, 0] == 0, "Intrinsic matrix must have zero skew"
 
-    # Intrinsic parameters
-    fu, fv = intrinsic[0, 0], intrinsic[1, 1]
-    cu, cv = intrinsic[0, 2], intrinsic[1, 2]
+    # Intrinsic parameters  内参提取
+    fu, fv = intrinsic[0, 0], intrinsic[1, 1]  # 焦距 fx, fy
+    cu, cv = intrinsic[0, 2], intrinsic[1, 2]  # 主点 cx, cy
 
-    # Generate grid of pixel coordinates
+    # Generate grid of pixel coordinates  生成像素坐标网格
     u, v = np.meshgrid(np.arange(W), np.arange(H))
 
-    # Unproject to camera coordinates
+    # Unproject to camera coordinates  反投影到相机坐标系
     x_cam = (u - cu) * depth_map / fu
     y_cam = (v - cv) * depth_map / fv
     z_cam = depth_map
 
-    # Stack to form camera coordinates
+    # Stack to form camera coordinates  堆叠为 (H, W, 3)
     cam_coords = np.stack((x_cam, y_cam, z_cam), axis=-1).astype(np.float32)
 
     return cam_coords
@@ -119,6 +138,14 @@ def depth_to_cam_coords_points(depth_map: np.ndarray, intrinsic: np.ndarray) -> 
 
 def closed_form_inverse_se3(se3, R=None, T=None):
     """
+    计算 SE3 矩阵的闭形式逆矩阵（利用旋转矩阵正交性）。
+    
+    公式：
+        [R|t]^{-1} = [R^T | -R^T * t]
+    
+    比 np.linalg.inv() 更高效，因为直接利用旋转矩阵的正交性。
+    VGGT-SLAM 中所有相机外参的求逆都使用此函数。
+
     Compute the inverse of each 4x4 (or 3x4) SE3 matrix in a batch.
 
     If `R` and `T` are provided, they must correspond to the rotation and translation
