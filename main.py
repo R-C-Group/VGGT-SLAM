@@ -89,7 +89,9 @@ def main():
         processor = Sam3Processor(sam3_model, confidence_threshold=0.50)
 
         # 加载 CLIP 模型，用于图像-文本语义匹配
-        clip_model = pe.CLIP.from_config("PE-Core-L14-336", pretrained=True)  # Downloads from HF
+        # clip_model = pe.CLIP.from_config("PE-Core-L14-336", pretrained=True)  # Downloads from HF
+        clip_model = pe.CLIP.from_config("PE-Core-L14-336", pretrained=False)
+        clip_model.load_ckpt("/home/kwanwaipang/.cache/torch/hub/PE-Core-L14-336.pt")
         clip_model = clip_model.cuda()
         clip_tokenizer = transforms.get_text_tokenizer(clip_model.context_length)  # 文本分词器
         clip_preprocess = transforms.get_image_transform(clip_model.image_size)    # 图像预处理变换

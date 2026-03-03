@@ -144,7 +144,19 @@ python3 main.py --image_folder office_loop --max_loops 1 --vis_map --run_os
 +    checkpoint_path = "/home/kwanwaipang/VGGT-SLAM/third_party/sam3_model/weight/sam3.pt" # 换成你实际的文件路径
 ```
 
-* 需要从网站`https://huggingface.co/facebook/PE-Core-L14-336`上，下载权重（应该是CLIP的权重）`PE-Core-L14-336.pt`，放置在`~/.cache/huggingface/hub/`文件夹中
+* 需要从网站`https://huggingface.co/facebook/PE-Core-L14-336`上，下载权重（应该是CLIP的权重）`PE-Core-L14-336.pt`，放置到`~/.cache/torch/hub/`。注意，不可以放置在`/home/kwanwaipang/.cache/huggingface/hub/models--facebook--PE-Core-L14-336`文件夹中，因为Hugging Face 的缓存机制不是普通的文件夹。它底层靠的是“软链接（Symlinks）”和“哈希码（Hashes）”。正常的缓存目录下，会包含 blobs（存实际数据的文件夹）、refs 和 snapshots（存哈希值软链接的文件夹）。当你的代码去调用hf_hub_download 时，它会去寻找带有特定哈希值的路径。你直接丢一个 .pt 文件进去，它根本不认，会判定缓存不存在，进而强制发起网络请求。
+
+```diff
+-        clip_model = pe.CLIP.from_config("PE-Core-L14-336", pretrained=True)  # Downloads from HF
++        clip_model = pe.CLIP.from_config("PE-Core-L14-336", pretrained=False)
++        clip_model.load_ckpt("/home/kwanwaipang/.cache/torch/hub/PE-Core-L14-336.pt")
+```
+
+* 运行后，先建图，建图结束后会提示输入检测物体。
+
+
+
+
 
 
 * 接下来采用手机录制一段视频的建图效果。请注意，虽然竖屏手机视频也可以观看，但为了避免图像被裁剪，建议使用横屏视频。
