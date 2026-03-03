@@ -154,9 +154,20 @@ python3 main.py --image_folder office_loop --max_loops 1 --vis_map --run_os
 
 * 运行后，先建图，建图结束后会提示输入检测物体。
 
-
-
-
+<div align="center">
+  <table style="border: none; background-color: transparent;">
+    <tr align="center">
+      <td style="width: 50%; border: none; padding: 0.01; background-color: transparent; vertical-align: middle;">
+        <img src="./assets/微信截图_20260303155515.png" width="100%" />
+      </td>
+      <td style="width: 50%; border: none; padding: 0.01; background-color: transparent; vertical-align: middle;">
+        <img src="./assets/微信截图_20260303155539.png" width="100%" />
+      </td>
+    </tr>
+  </table>
+  <figcaption>
+  </figcaption>
+</div>
 
 
 * 接下来采用手机录制一段视频的建图效果。请注意，虽然竖屏手机视频也可以观看，但为了避免图像被裁剪，建议使用横屏视频。
